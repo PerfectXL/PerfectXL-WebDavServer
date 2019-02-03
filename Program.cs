@@ -1,53 +1,118 @@
 ﻿using System;
-using System.IO;
+using System.Diagnostics;
 using System.Linq;
-using System.ServiceProcess;
-using WebDAVSharp.FileExample.Framework;
+using System.Net;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+using Topshelf;
 
-namespace WebDAVSharp.FileExample
+namespace PerfectXL.WebDavServer
 {
     internal class Program
     {
-        private static void Main(string[] args)
+        private static readonly Logger MyLogger = LogManager.GetCurrentClassLogger();
+
+        internal static void Main(string[] args)
         {
-            try
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+            ConfigureNLog();
+
+            var mustStop = false;
+
+            if (args.Any(s => string.Equals(s, "-bind", StringComparison.OrdinalIgnoreCase)))
             {
-                // if install was a command line flag, then run the installer at runtime.
-                if (args.Contains("-install", StringComparer.InvariantCultureIgnoreCase))
-                {
-                    WindowsServiceInstaller.RuntimeInstall<ServiceImplementation>();
-                }
+                Console.WriteLine(HttpListenerSslEnabler.BindCertificate() == HttpListenerSslEnabler.BindingResult.Success
+                    ? "Certificate binding succeeded."
+                    : "Could not bind the certificate to the IP End Point. HTTPS is not possible now.");
+                mustStop = true;
+            }
 
-                // if uninstall was a command line flag, run uninstaller at runtime.
-                else if (args.Contains("-uninstall", StringComparer.InvariantCultureIgnoreCase))
-                {
-                    WindowsServiceInstaller.RuntimeUnInstall<ServiceImplementation>();
-                }
+            if (!mustStop && !HttpListenerSslEnabler.HasBinding())
+            {
+                Console.WriteLine("We must bind the certificate to the IP End Point first. This will happen in an elevated command.");
 
-                // otherwise, fire up the service as either console or windows service based on UserInteractive property.
-                else
+                var process = new Process
                 {
-                    var implementation = new ServiceImplementation();
+                    StartInfo = new ProcessStartInfo {FileName = GetExecutingAssemblyCodeBasePath(), Arguments = "-bind", Verb = "runas"}
+                };
+                process.Start();
+                process.WaitForExit();
+                mustStop = true;
+            }
 
-                    // if started from console, file explorer, etc, run as console app.
-                    if (Environment.UserInteractive)
+            if (!mustStop)
+            {
+                try
+                {
+                    TopshelfExitCode rc = HostFactory.Run(x =>
                     {
-                        ConsoleHarness.Run(args, implementation);
-                    }
+                        x.Service<WebDavService>(s =>
+                        {
+                            s.ConstructUsing(name => new WebDavService());
+                            s.WhenStarted(tc => tc.Start());
+                            s.WhenStopped(tc => tc.Stop());
+                        });
+                        x.RunAsLocalSystem();
 
-                    // otherwise run as a windows service
-                    else
-                    {
-                        Directory.SetCurrentDirectory(AppDomain.CurrentDomain.BaseDirectory);
-                        ServiceBase.Run(new WindowsServiceHarness(implementation));
-                    }
+                        x.SetDescription("PerfectXL.WebDavServer");
+                        x.SetDisplayName("PerfectXL.WebDavServer");
+                        x.SetServiceName("PerfectXL.WebDavServer");
+                    });
+
+                    var exitCode = (int) Convert.ChangeType(rc, rc.GetTypeCode());
+                    Environment.ExitCode = exitCode;
+                }
+                catch (Exception ex)
+                {
+                    MyLogger.Error(ex, ex.Message);
                 }
             }
 
-            catch (Exception ex)
+            if (!ConsoleWillBeDestroyedAtTheEnd())
             {
-                ConsoleHarness.WriteToConsole(ConsoleColor.Red, "An exception occurred in Main(): {0}", ex);
+                return;
             }
+
+            Console.WriteLine("Press any key to close...");
+            Console.ReadKey();
+        }
+
+        private static void ConfigureNLog()
+        {
+            var config = new LoggingConfiguration();
+            var fileTarget = new FileTarget("fileTarget")
+            {
+                FileName = "${basedir}/PerfectXL-WebDavServer.log",
+                ArchiveEvery = FileArchivePeriod.Day,
+                ArchiveFileName = "${basedir}/PerfectXL-WebDavServer-{#}.log",
+                MaxArchiveFiles = 9,
+                Layout = "${longdate} [${threadid:padding=4}] ${level:uppercase=true:padding=-5} ${logger} - ${message} ${exception}"
+            };
+            config.AddTarget(fileTarget);
+            config.AddRuleForAllLevels(fileTarget);
+
+            LogManager.Configuration = config;
+        }
+
+        private static bool ConsoleWillBeDestroyedAtTheEnd()
+        {
+            var processList = new uint[1];
+            var processCount = GetConsoleProcessList(processList, 1);
+            return processCount == 1;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint GetConsoleProcessList(uint[] processList, uint processCount);
+
+        private static string GetExecutingAssemblyCodeBasePath()
+        {
+            var codeBase = Assembly.GetExecutingAssembly().CodeBase;
+            var uri = new UriBuilder(codeBase);
+            return Uri.UnescapeDataString(uri.Path);
         }
     }
 }
