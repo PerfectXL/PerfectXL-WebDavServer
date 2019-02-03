@@ -25,23 +25,46 @@ namespace PerfectXL.WebDavServer
 
             if (args.Any(s => string.Equals(s, "-bind", StringComparison.OrdinalIgnoreCase)))
             {
-                Console.WriteLine(HttpListenerSslEnabler.BindCertificate() == HttpListenerSslEnabler.BindingResult.Success
+                var message = HttpListenerSslEnabler.BindCertificate() == HttpListenerSslEnabler.BindingResult.Success
                     ? "Certificate binding succeeded."
-                    : "Could not bind the certificate to the IP End Point. HTTPS is not possible now.");
+                    : "Could not bind the certificate to the IP End Point. HTTPS is not possible now.";
+                MyLogger.Info(message);
+                Console.WriteLine(message);
                 mustStop = true;
             }
 
             if (!mustStop && !HttpListenerSslEnabler.HasBinding())
             {
-                Console.WriteLine("We must bind the certificate to the IP End Point first. This will happen in an elevated command.");
-
-                var process = new Process
+                if (UACHelper.UACHelper.IsElevated)
                 {
-                    StartInfo = new ProcessStartInfo {FileName = GetExecutingAssemblyCodeBasePath(), Arguments = "-bind", Verb = "runas"}
-                };
-                process.Start();
-                process.WaitForExit();
-                mustStop = true;
+                    string message;
+                    if (HttpListenerSslEnabler.BindCertificate() != HttpListenerSslEnabler.BindingResult.Success)
+                    {
+                        message = "Certificate binding succeeded.";
+                    }
+                    else
+                    {
+                        message = "Could not bind the certificate to the IP End Point. HTTPS is not possible now.";
+                        mustStop = true;
+                    }
+
+                    MyLogger.Info(message);
+                    Console.WriteLine(message);
+                }
+                else
+                {
+                    const string message = "We must bind the certificate to the IP End Point first. This will happen in an elevated command.";
+                    MyLogger.Info(message);
+                    Console.WriteLine(message);
+
+                    var process = new Process
+                    {
+                        StartInfo = new ProcessStartInfo {FileName = GetExecutingAssemblyCodeBasePath(), Arguments = "-bind", Verb = "runas"}
+                    };
+                    process.Start();
+                    process.WaitForExit();
+                    mustStop = true;
+                }
             }
 
             if (!mustStop)
