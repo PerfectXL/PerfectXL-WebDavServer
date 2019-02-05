@@ -34,3 +34,18 @@ curl -k --basic -u PerfectXL:PerfectXL -X DELETE https://localhost:52442/123
 ```
 
 See also <https://www.qed42.com/blog/using-curl-commands-webdav>.
+
+## Certificate binding
+
+The application will generate a self-signed certificate and bind it
+to its IP port. Should you ever want to remove the binding, use
+`netsh`:
+
+```bat
+
+netsh http delete sslcert ipport=0.0.0.0:52442
+
+```
+
+(Note that the certificate and the binding are not removed when you
+uninstall the program.)
