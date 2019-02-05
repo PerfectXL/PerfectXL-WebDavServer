@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
@@ -21,6 +23,12 @@ namespace PerfectXL.WebDavServer
 
             ConfigureNLog();
 
+            if (args.Length == 6 && args[0] == "-configure")
+            {
+                ConfigureSettings(args[1], args[2], args[3], args[4], args[5]);
+                return;
+            }
+
             var mustStop = false;
 
             if (args.Any(s => string.Equals(s, "-bind", StringComparison.OrdinalIgnoreCase)))
@@ -35,73 +43,44 @@ namespace PerfectXL.WebDavServer
 
             if (!mustStop && !HttpListenerSslEnabler.HasBinding())
             {
-                if (UACHelper.UACHelper.IsElevated)
-                {
-                    string message;
-                    if (HttpListenerSslEnabler.BindCertificate() != HttpListenerSslEnabler.BindingResult.Success)
-                    {
-                        message = "Certificate binding succeeded.";
-                    }
-                    else
-                    {
-                        message = "Could not bind the certificate to the IP End Point. HTTPS is not possible now.";
-                        mustStop = true;
-                    }
-
-                    MyLogger.Info(message);
-                    Console.WriteLine(message);
-                }
-                else
-                {
-                    const string message = "We must bind the certificate to the IP End Point first. This will happen in an elevated command.";
-                    MyLogger.Info(message);
-                    Console.WriteLine(message);
-
-                    var process = new Process
-                    {
-                        StartInfo = new ProcessStartInfo {FileName = GetExecutingAssemblyCodeBasePath(), Arguments = "-bind", Verb = "runas"}
-                    };
-                    process.Start();
-                    process.WaitForExit();
-                    mustStop = true;
-                }
+                mustStop = EnsureBinding();
             }
 
-            if (!mustStop)
+            if (mustStop)
             {
-                try
+                if (!ConsoleWillBeDestroyedAtTheEnd())
                 {
-                    TopshelfExitCode rc = HostFactory.Run(x =>
-                    {
-                        x.Service<WebDavService>(s =>
-                        {
-                            s.ConstructUsing(name => new WebDavService());
-                            s.WhenStarted(tc => tc.Start());
-                            s.WhenStopped(tc => tc.Stop());
-                        });
-                        x.RunAsLocalSystem();
+                    return;
+                }
 
-                        x.SetDescription("PerfectXL.WebDavServer");
-                        x.SetDisplayName("PerfectXL.WebDavServer");
-                        x.SetServiceName("PerfectXL.WebDavServer");
+                Console.WriteLine("Press any key to close...");
+                Console.ReadKey();
+            }
+
+            try
+            {
+                TopshelfExitCode rc = HostFactory.Run(x =>
+                {
+                    x.Service<WebDavService>(s =>
+                    {
+                        s.ConstructUsing(name => new WebDavService());
+                        s.WhenStarted(tc => tc.Start());
+                        s.WhenStopped(tc => tc.Stop());
                     });
+                    x.RunAsLocalSystem();
 
-                    var exitCode = (int) Convert.ChangeType(rc, rc.GetTypeCode());
-                    Environment.ExitCode = exitCode;
-                }
-                catch (Exception ex)
-                {
-                    MyLogger.Error(ex, ex.Message);
-                }
+                    x.SetDescription("PerfectXL.WebDavServer");
+                    x.SetDisplayName("PerfectXL.WebDavServer");
+                    x.SetServiceName("PerfectXL.WebDavServer");
+                });
+
+                var exitCode = (int) Convert.ChangeType(rc, rc.GetTypeCode());
+                Environment.ExitCode = exitCode;
             }
-
-            if (!ConsoleWillBeDestroyedAtTheEnd())
+            catch (Exception ex)
             {
-                return;
+                MyLogger.Error(ex, ex.Message);
             }
-
-            Console.WriteLine("Press any key to close...");
-            Console.ReadKey();
         }
 
         private static void ConfigureNLog()
@@ -121,11 +100,74 @@ namespace PerfectXL.WebDavServer
             LogManager.Configuration = config;
         }
 
+        private static void ConfigureSettings(string path, string host, string port, string user, string password)
+        {
+            var encrypted = WebDavService.Hash(password);
+            try
+            {
+                Configuration configFile = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+                KeyValueConfigurationCollection settings = configFile.AppSettings.Settings;
+                foreach (var kvp in new Dictionary<string, string> {{"path", path}, {"host", host}, {"port", port}, {"user", user}, {"password", encrypted}})
+                {
+                    if (settings[kvp.Key] == null)
+                    {
+                        settings.Add(kvp.Key, kvp.Value);
+                    }
+                    else
+                    {
+                        settings[kvp.Key].Value = kvp.Value;
+                    }
+                }
+
+                configFile.Save(ConfigurationSaveMode.Modified);
+                ConfigurationManager.RefreshSection(configFile.AppSettings.SectionInformation.Name);
+            }
+            catch (ConfigurationErrorsException ex)
+            {
+                MyLogger.Error(ex, ex.Message);
+            }
+        }
+
         private static bool ConsoleWillBeDestroyedAtTheEnd()
         {
             var processList = new uint[1];
             var processCount = GetConsoleProcessList(processList, 1);
             return processCount == 1;
+        }
+
+        private static bool EnsureBinding()
+        {
+            if (UACHelper.UACHelper.IsElevated)
+            {
+                bool mustStop;
+                string message;
+                if (HttpListenerSslEnabler.BindCertificate() != HttpListenerSslEnabler.BindingResult.Success)
+                {
+                    message = "Certificate binding succeeded.";
+                    mustStop = false;
+                }
+                else
+                {
+                    message = "Could not bind the certificate to the IP End Point. HTTPS is not possible now.";
+                    mustStop = true;
+                }
+
+                MyLogger.Info(message);
+                Console.WriteLine(message);
+                return mustStop;
+            }
+
+            const string elevatedMessage = "We must bind the certificate to the IP End Point first. This will happen in an elevated command.";
+            MyLogger.Info(elevatedMessage);
+            Console.WriteLine(elevatedMessage);
+
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo {FileName = GetExecutingAssemblyCodeBasePath(), Arguments = "-bind", Verb = "runas"}
+            };
+            process.Start();
+            process.WaitForExit();
+            return true;
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]
