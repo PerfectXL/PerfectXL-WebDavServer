@@ -35,6 +35,21 @@ curl -k --basic -u PerfectXL:PerfectXL -X DELETE https://localhost:52442/123
 
 See also <https://www.qed42.com/blog/using-curl-commands-webdav>.
 
+And if you don't have curl, you can run these Powershell commands:
+
+```ps1
+$hostname = "localhost"
+$port = 52442
+$user = "PerfectXL"
+$password = "PerfectXL"
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+$wc = (New-Object System.Net.WebClient)
+$wc.Headers.Add("Authorization", "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("${user}:${password}")))
+[System.Text.Encoding]::ASCII.GetString($wc.UploadData("https://${hostname}:${port}/", "PROPFIND", [System.Text.Encoding]::ASCII.GetBytes("")))
+```
+
+Any XML output indicates success.
+
 ## Certificate binding
 
 The application will generate a self-signed certificate and bind it
