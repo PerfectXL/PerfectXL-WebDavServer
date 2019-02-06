@@ -37,7 +37,7 @@ namespace PerfectXL.WebDavServer
 
                 var certificateBinding = new CertificateBinding(certificateThumbprint, StoreName.My, endPoint, appId)
                 {
-                    Options = {DoNotVerifyCertificateRevocation = true}
+                    Options = {DoNotVerifyCertificateRevocation = true, NoUsageCheck = true}
                 };
                 ICertificateBindingConfiguration config = new CertificateBindingConfiguration();
                 config.Bind(certificateBinding);

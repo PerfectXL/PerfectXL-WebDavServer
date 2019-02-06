@@ -79,6 +79,7 @@
     <Compile Include="Certificates\CertificateHelper.cs" />
     <Compile Include="Certificates\SelfSignedCertificate.cs" />
     <Compile Include="HttpListenerSslEnabler.cs" />
+    <Compile Include="KeyValueConfigurationCollectionExtensions.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="BasicAuthHttpListenerAdapter.cs" />
